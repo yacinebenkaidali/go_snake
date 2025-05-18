@@ -46,6 +46,7 @@ type Game struct {
 	mu            sync.Mutex
 	paused        bool
 	player        *Player
+	scoreCh       chan int
 }
 
 var snakeStyle = tcell.StyleDefault.Background(tcell.ColorReset).Foreground(tcell.ColorMediumVioletRed)

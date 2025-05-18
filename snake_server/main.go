@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"log"
 	"math/rand"
 	"os"
 	"sync"
@@ -29,6 +30,7 @@ func NewGame() (*Game, error) {
 		speed:         frameTIme,
 		currDirection: RIGHT,
 		mu:            sync.Mutex{},
+		scoreCh:       make(chan int),
 	}
 	g.GenerateFood()
 	g.InitializeSnake()
@@ -77,8 +79,9 @@ func (g *Game) InitializeSnake() {
 	g.snake = snake
 }
 
-func (g *Game) DrawSnakeAndFood() {
+func (s *ConnectionManager) DrawSnakeAndFood() {
 	// compute next position
+	g := s.g
 	if !g.paused {
 		newHead := Position{X: g.snake[len(g.snake)-1].X, Y: g.snake[len(g.snake)-1].Y}
 		switch g.currDirection {
@@ -113,6 +116,9 @@ func (g *Game) DrawSnakeAndFood() {
 		if newHead.X == g.food.X && newHead.Y == g.food.Y {
 			g.snake = append(g.snake, newHead)
 			g.score++
+			// send score to client
+			g.scoreCh <- g.score
+			g.WriteAt(g.score)
 			g.GenerateFood()
 		} else {
 			g.snake = append(g.snake[1:], newHead)
@@ -178,6 +184,12 @@ func (g *Game) DrawInfo() {
 		g.s.SetContent(i, boardHeight+4, rune(score[i]), nil, tcell.StyleDefault)
 	}
 }
+func (g *Game) WriteAt(y int) {
+	msg := fmt.Sprintf("Write score %d", g.score)
+	for i := range len(msg) {
+		g.s.SetContent(i, boardHeight+y, rune(msg[i]), nil, tcell.StyleDefault)
+	}
+}
 
 func (g *Game) HandleInput(ev *tcell.EventKey) {
 	if g.gameOver {
@@ -226,34 +238,8 @@ func (g *Game) HandleInput(ev *tcell.EventKey) {
 	}
 }
 
-func (g *Game) gameControlEvents() {
-	for {
-		g.s.Show()
-		ev := g.s.PollEvent()
-		switch ev := ev.(type) {
-		case *tcell.EventResize:
-			g.s.Sync()
-		case *tcell.EventKey:
-			{
-				if ev.Key() == tcell.KeyEscape || ev.Key() == tcell.KeyCtrlC || ev.Rune() == 'q' {
-					close(g.quiCh)
-					return
-				}
-				if ev.Rune() == 'r' {
-					g.resetGame()
-				}
-				if ev.Rune() == 'p' {
-					g.paused = !g.paused
-				}
-
-				g.HandleInput(ev)
-			}
-
-		}
-	}
-}
-
-func (g *Game) RunGame() {
+func (cm *ConnectionManager) RunGame() {
+	g := cm.g
 	player := NewPlayer([]string{gameOverSound, gameStartSound})
 	g.player = player
 	defer g.player.Close()
@@ -278,7 +264,7 @@ func (g *Game) RunGame() {
 					// draw ascii game over
 					g.DrawMessage()
 				} else {
-					g.DrawSnakeAndFood()
+					cm.DrawSnakeAndFood()
 				}
 				g.DrawInfo()
 				g.s.Show()
@@ -287,12 +273,24 @@ func (g *Game) RunGame() {
 	}
 }
 
+var debugLogger *log.Logger
+
 func main() {
+	logFile, err := os.OpenFile("debug.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error opening log file: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Initialize the logger
+	debugLogger = log.New(logFile, "DEBUG: ", log.Ltime|log.Lshortfile)
+
 	server, err := NewServer("", "3000")
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 	}
+	go server.sendScore()
 	go server.StartServer()
 
-	server.g.RunGame()
+	server.RunGame()
 }

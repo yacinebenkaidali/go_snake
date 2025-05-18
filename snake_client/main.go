@@ -3,8 +3,10 @@ package main
 import (
 	"encoding/binary"
 	"fmt"
+	"io"
 	"log"
 	"net"
+	"os"
 
 	"github.com/gdamore/tcell/v2"
 )
@@ -22,7 +24,39 @@ const (
 	RESTART = 0x110
 )
 
+var debugLogger *log.Logger
+
+func readConn(conn net.Conn, s *tcell.Screen) {
+	for {
+		buff := make([]byte, 4)
+		_, err := io.ReadFull(conn, buff)
+		if err != nil {
+			continue
+		}
+		res := binary.BigEndian.Uint32(buff)
+		debugLogger.Printf("received %d\n", res)
+
+		printAt(0, 0, fmt.Sprint(res), s)
+	}
+}
+
+func printAt(x, y int, s string, screen *tcell.Screen) {
+	for i, ch := range s {
+		(*screen).SetContent(x+i, y, ch, nil, tcell.StyleDefault)
+	}
+	(*screen).Show()
+}
+
 func main() {
+	logFile, err := os.OpenFile("debug2.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error opening log file: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Initialize the logger
+	debugLogger = log.New(logFile, "DEBUG: ", log.Ltime|log.Lshortfile)
+
 	serverAddr := ":3000"
 	// Connect to the server
 	conn, err := net.Dial("tcp", serverAddr)
@@ -31,6 +65,7 @@ func main() {
 		return
 	}
 	defer conn.Close()
+
 	// Initialize screen
 	s, err := tcell.NewScreen()
 	if err != nil {
@@ -42,6 +77,8 @@ func main() {
 	s.SetStyle(tcell.StyleDefault.Background(tcell.ColorReset).Foreground(tcell.ColorReset))
 	s.Clear()
 	defer s.Fini()
+
+	go readConn(conn, &s)
 
 	for {
 		// Update screen

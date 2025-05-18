@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/binary"
 	"fmt"
 	"io"
@@ -97,5 +98,31 @@ func (cm *ConnectionManager) HandleConnection(conn net.Conn) {
 		case RESTART:
 			cm.g.resetGame()
 		}
+	}
+}
+
+func (cm *ConnectionManager) sendScore() {
+	for {
+		select {
+		case score := <-cm.g.scoreCh:
+			{
+				buf := new(bytes.Buffer)
+				score32 := int32(score)
+				err := binary.Write(buf, binary.BigEndian, score32)
+				if err != nil {
+					fmt.Println("binary.Write failed:", err)
+				}
+				b := buf.Bytes()
+				for _, conn := range cm.connections {
+					n, _ := conn.Write(b)
+					debugLogger.Printf("bytes wrote %d\n", n)
+				}
+			}
+		case <-cm.quiCh:
+			{
+				return
+			}
+		}
+
 	}
 }
